@@ -1,6 +1,5 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Sparkles, Edit, Hash } from 'lucide-react'
-import { useState } from 'react'
 
 function BlogTitles() {
     const blogCategories = [
