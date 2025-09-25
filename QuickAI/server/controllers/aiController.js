@@ -145,7 +145,7 @@ export const generateImage = async (req, res) => {
         const height = 1024;
         const seed   = 24078;
         const model  = "flux";  // "flux", "sdxl", "nanobanana",etc.
-        const folder = "pollinations";
+        const folder = "generated";
 
         // Build Pollinations URL (Cloudinary will fetch it)
         const pollinationsUrl = buildPollinationsUrl({ prompt, width, height, seed, model });
@@ -179,45 +179,115 @@ export const generateImage = async (req, res) => {
 export const removeImageBackground = async (req, res) => {
     try {
         const { userId } = req.auth;
-        const { prompt, publish } = req.body;
+        const { prompt } = req.query;
+        const file = req.file;
         const plan = req.plan;
 
         if(plan !== 'premium') {
             return res.json({success: false, error: 'Image generation is available for premium users only.'});
         }
+         if (!file?.path) {
+           return res.json({ success: false, error: 'No file uploaded.' });
+        }
 
         const width  = 1024;
         const height = 1024;
-        const seed   = 24078;
-        const model  = "flux";  // "flux", "sdxl", "nanobanana",etc.
-        const folder = "pollinations";
 
-        // Build Pollinations URL (Cloudinary will fetch it)
-        const pollinationsUrl = buildPollinationsUrl({ prompt, width, height, seed, model });
+        const folder = "bg_transformation";
 
         // Stable public_id so same prompt+params map to same Cloudinary asset
-        const signature = promptHash(JSON.stringify({ prompt, width, height, seed, model }));
-        const public_id = `${folder}/${signature}`;
+        const signature = promptHash(JSON.stringify({ action: 'gen_background_replace', prompt, width, height }));
+        const public_id = `${folder}/${signature}`;   
 
-        // Upload by URL (no buffering on your server)
-        const uploadResult = await cloudinary.uploader.upload(pollinationsUrl, {
+        // Cloudinary expects prompt text in the effect qualifier; URL-encode it
+        const promptQualifier = (prompt && String(prompt).trim().length)
+                ? `gen_background_replace:prompt_${encodeURIComponent(String(prompt).trim())}`
+                : 'gen_background_replace';
+
+        const uploadResult = await cloudinary.uploader.upload(file.path, {
         public_id,
-        folder,                 // keeps it neatly organized
-        overwrite: false,       // don’t replace if already uploaded
-        resource_type: "image", // explicit
-        unique_filename: false, // we’re controlling the public_id
+        folder,
+        overwrite: true,
+        resource_type: 'image',
+        unique_filename: false,
         use_filename: false,
-        context: { prompt }     // optional: attach prompt as metadata
-        });     
 
-        await sql`INSERT INTO creations 
-                (user_id, prompt, content, type, publish) 
-                VALUES (${userId}, ${prompt}, ${uploadResult.secure_url}, 'image', ${publish ?? false})`;
+        // Generate background from the prompt, then normalize output
+        eager: [
+            { effect: promptQualifier },
+            { width, height, crop: 'fill', gravity: 'auto' },
+            { fetch_format: 'auto', quality: 'auto' }
+        ],
+        eager_async: false,          // wait until the derived image is ready
+        context: prompt ? { prompt } : undefined
+        });
 
-                res.json({success: true, content: uploadResult.secure_url});
+        // Prefer the eager result URL (the transformed asset we just generated)
+        const outUrl =
+        uploadResult?.eager?.[0]?.secure_url ||
+        uploadResult?.secure_url;  
+
+                await sql`INSERT INTO creations 
+                        (user_id, prompt, content, type) 
+                        VALUES (${userId}, ${prompt}, ${outUrl}, 'image')`;
+
+                res.json({success: true, content: outUrl, public_id: uploadResult.public_id });
     } catch (error) {
         console.error(error.message);
-        res.json({ success: false, error: error.message });
+        res.json({ success: false, error: error.message, stack: error.stack } );
+    }
+}
+
+
+export const removeImageObject = async (req, res) => {
+    try {
+        const { userId } = req.auth;
+        const { object } = req.query;
+        const file = req.file;
+        const plan = req.plan;
+
+        if(plan !== 'premium') {
+            return res.json({success: false, error: 'Image generation is available for premium users only.'});
+        }
+         if (!file?.path) {
+           return res.json({ success: false, error: 'No file uploaded.' });
+        }
+
+        const width  = 1024;
+        const height = 1024;
+
+        const folder = "bg_transformation";
+
+        // Stable public_id so same prompt+params map to same Cloudinary asset
+        const signature = promptHash(JSON.stringify({ action: 'gen_background_replace', object, width, height }));
+        const public_id = `${folder}/${signature}`;   
+
+
+        const uploadResult = await cloudinary.uploader.upload(file.path, {
+        public_id,
+        folder,
+        overwrite: true,
+        resource_type: 'image',
+        unique_filename: false,
+        use_filename: false,
+        });
+
+        const imageUrl = cloudinary.url(uploadResult.public_id, {
+            secure: true,
+            transformation: [
+                { effect: `gen_remove:${object}` },
+            ],
+            resource_type: 'image',
+        });
+
+                await sql`INSERT INTO creations 
+                        (user_id, prompt, content, type) 
+                        VALUES (${userId}, ${`Removed ${object} from the image`}, ${imageUrl}, 'image')`;
+
+                res.json({success: true, content: imageUrl, public_id: uploadResult.public_id });
+    } catch (error) {
+        console.error(error.message);
+        res.json({ success: false, error: error.message, stack: error.stack } );
     }
 }
 
@@ -238,3 +308,26 @@ function buildPollinationsUrl({ prompt, width, height, seed, model }) {
 function promptHash(input) {
   return crypto.createHash("sha256").update(input).digest("hex").slice(0, 24);
 }
+
+// export function getBgRemovedUrl(publicId, prompt = "Minimalist background with a soft pastel gradient even lighting") {
+//   return cloudinary.url(publicId, {
+//     secure: true,
+//     transformation: [
+//       // plain background removal:
+//       { effect: `gen_background:prompt_${prompt}` },
+//       // or keep fine edges (fur/hair):
+//       // { effect: "background_removal:fineedges_y" }
+//       { fetch_format: "auto", quality: "auto" }
+//     ],
+//   });
+// }
+
+// // Make a URL that removes an object by prompt
+// export function objectRemovedUrl(publicId, removePrompt, { removeAll = false } = {}) {
+//   // example prompt: "the traffic cone" or "logos"
+//   const effect = `gen_remove:prompt_${removePrompt}${removeAll ? ";multiple_true" : ""}`;
+//   return cloudinary.url(publicId, {
+//     secure: true,
+//     transformation: [{ effect }, { fetch_format: "auto", quality: "auto" }],
+//   });
+// }
