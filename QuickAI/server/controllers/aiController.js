@@ -3,6 +3,8 @@ import sql from "../configs/db.js";
 import { clerkClient } from "@clerk/express";
 import crypto from "crypto";
 import {v2 as cloudinary} from 'cloudinary';
+import fs from 'fs';
+import pdf from 'pdf-parse/lib/pdf-parse.js';
 
 const AI = new OpenAI({
     apiKey: process.env.GEMINI_API_KEY,
@@ -285,6 +287,53 @@ export const removeImageObject = async (req, res) => {
                         VALUES (${userId}, ${`Removed ${object} from the image`}, ${imageUrl}, 'image')`;
 
                 res.json({success: true, content: imageUrl, public_id: uploadResult.public_id });
+    } catch (error) {
+        console.error(error.message);
+        res.json({ success: false, error: error.message, stack: error.stack } );
+    }
+}
+
+
+export const resumeReview = async (req, res) => {
+    try {
+        const { userId } = req.auth;
+        const resume = req.file;
+        const plan = req.plan;
+
+        if(plan !== 'premium') {
+            return res.json({success: false, error: 'Image generation is available for premium users only.'});
+        }
+         if (!resume?.path) {
+           return res.json({ success: false, error: 'No resume file uploaded.' });
+        }
+
+        if (resume.size > 5*1024*1024) { // 5MB limit
+            return res.json({ success: false, error: 'File size exceeds 5MB limit.' });
+        }
+
+        const dataBuffer = fs.readFileSync(resume.path);
+        const pdfData = await pdf(dataBuffer);
+        const prompt = `Review my resume and suggest improvements:\n\n${pdfData.text}`;
+
+        const response = await AI.chat.completions.create({
+            model: "gemini-2.0-flash",
+            messages: [
+                {
+                    role: "user",
+                    content: prompt
+                }
+            ],
+            max_tokens: 1000,
+            temperature: 0.7,
+        });
+
+        const content = response.choices[0].message.content;
+
+         await sql`INSERT INTO creations 
+                        (user_id, prompt, content, type) 
+                        VALUES (${userId}, 'Reviewed resume', ${content}, 'resume_review')`;
+
+        res.json({success: true, content});
     } catch (error) {
         console.error(error.message);
         res.json({ success: false, error: error.message, stack: error.stack } );

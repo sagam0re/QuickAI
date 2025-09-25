@@ -22,5 +22,6 @@ aiRouter.post('/generate-blog-title', auth, generateBlogTitle);
 aiRouter.post('/generate-image', auth, generateImage);
 aiRouter.post('/remove-image-bg', auth, upload.single('image'), removeImageBackground);
 aiRouter.post('/remove-image-object', auth, upload.single('image'), removeImageObject);
+aiRouter.post('/review-resume', auth, upload.single('resume'), reviewResume);
 
 export default aiRouter;
