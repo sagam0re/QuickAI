@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { auth } from '../middlewares/auth.js';
-import { generateArticle, generateBlogTitle, generateImage, removeImageBackground, removeImageObject } from '../controllers/aiController.js';
+import { generateArticle, generateBlogTitle, generateImage, removeImageBackground, removeImageObject, resumeReview } from '../controllers/aiController.js';
 
 // Configure storage for uploaded files
 const storage = multer.diskStorage({
@@ -22,6 +22,6 @@ aiRouter.post('/generate-blog-title', auth, generateBlogTitle);
 aiRouter.post('/generate-image', auth, generateImage);
 aiRouter.post('/remove-image-bg', auth, upload.single('image'), removeImageBackground);
 aiRouter.post('/remove-image-object', auth, upload.single('image'), removeImageObject);
-aiRouter.post('/review-resume', auth, upload.single('resume'), reviewResume);
+aiRouter.post('/review-resume', auth, upload.single('resume'), resumeReview);
 
 export default aiRouter;
