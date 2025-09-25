@@ -3,8 +3,11 @@ import express from 'express';
 import cors from 'cors';
 import { clerkMiddleware, requireAuth } from '@clerk/express'
 import aiRouter from './routes/aiRouts.js';
+import connectCloudinary from './configs/cloudinary.js';
 
 const app = express();
+
+await connectCloudinary();
 
 app.use(cors());
 app.use(express.json());
